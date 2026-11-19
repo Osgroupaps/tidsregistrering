@@ -38,8 +38,8 @@ const S={view:'tid',week:mon(todayS()),canWrite:true,isAdmin:false,projects:{},m
 const uidn=()=>crypto.randomUUID();
 
 /* ---------- data ---------- */
-const fromRow=r=>({id:r.id,d:r.work_date,m:r.minutes,p:r.project_id,n:r.note||'',bl:r.billable,t0:(r.start_time||'').slice(0,5),t1:(r.end_time||'').slice(0,5)});
-const toRow=(u,e)=>({id:e.id,user_id:u,project_id:e.p,work_date:e.d,minutes:e.m,note:e.n||'',billable:e.bl!==false,start_time:e.t0||null,end_time:e.t1||null});
+const fromRow=r=>({id:r.id,d:r.work_date,m:r.minutes,p:r.project_id,n:r.note||'',bl:r.billable,pz:!!r.pause,t0:(r.start_time||'').slice(0,5),t1:(r.end_time||'').slice(0,5)});
+const toRow=(u,e)=>({id:e.id,user_id:u,project_id:e.p,work_date:e.d,minutes:e.m,note:e.n||'',billable:e.bl!==false,pause:!!e.pz,start_time:e.t0||null,end_time:e.t1||null});
 const range=ym=>[ym+'-01',ym+'-'+pad(lastDay(ym))];
 async function fetchAll(build){const out=[];for(let from=0;;from+=1000){const {data,error}=await build().range(from,from+999);if(error)throw error;out.push(...data);if(data.length<1000)break}return out}
 async function loadMonth(ym){const [a,b]=range(ym);const rows=await fetchAll(()=>sb.from('time_entries').select('*').eq('user_id',uid).gte('work_date',a).lte('work_date',b).order('work_date'));const o={};rows.forEach(r=>o[r.id]=fromRow(r));S.my[ym]=o}
@@ -56,37 +56,40 @@ const nm=u=>S.names[u]||S.emails[u]||(u===uid?'Mig':'Medarbejder');
 
 /* ---------- timer ---------- */
 async function loadTimer(){const {data}=await sb.from('timers').select('*').eq('user_id',uid).maybeSingle();S.timer=data?{p:data.project_id,n:data.note||'',start:Date.parse(data.started_at)}:null;if(S.timer)S.proj=S.timer.p}
-async function startTimer(){const p=S.proj;if(!p){S.err='Vælg et projekt først.';return render()}
+async function startTimer(){const p=S.proj;S.tpz=undefined;if(!p){S.err='Vælg et projekt først.';return render()}
  await guard(async()=>{const {error}=await sb.from('timers').upsert({user_id:uid,project_id:p,note:S.note||'',started_at:new Date().toISOString()});if(error)throw error;await loadTimer()})}
-async function stopTimer(){const t=S.timer;if(!t)return;const mins=Math.max(1,Math.round((Date.now()-t.start)/60000));const st=new Date(t.start);
- await guard(async()=>{await saveEntry(uid,{id:uidn(),d:ymd(st),m:Math.min(mins,1440),p:t.p,n:t.n||'',bl:true,t0:pad(st.getHours())+':'+pad(st.getMinutes())});const {error}=await sb.from('timers').delete().eq('user_id',uid);if(error)throw error;S.timer=null;S.note=''})}
+const PAUSE_MIN=30;
+const pzNet=(m,pz)=>pz?Math.max(1,m-PAUSE_MIN):m;
+async function stopTimer(){const t=S.timer;if(!t)return;const pz=S.tpz!==undefined?S.tpz:!!proj(t.p).pause;const mins=pzNet(Math.max(1,Math.round((Date.now()-t.start)/60000)),pz);const st=new Date(t.start);S.tpz=undefined;
+ await guard(async()=>{await saveEntry(uid,{id:uidn(),d:ymd(st),m:Math.min(mins,1440),p:t.p,n:t.n||'',bl:true,pz:pz,t0:pad(st.getHours())+':'+pad(st.getMinutes())});const {error}=await sb.from('timers').delete().eq('user_id',uid);if(error)throw error;S.timer=null;S.note=''})}
 
 /* ---------- modal: registrering ---------- */
 const projOptions=sel=>Object.keys(S.projects).filter(k=>S.projects[k].active!==false||k===sel).sort((a,b)=>S.projects[a].name.localeCompare(S.projects[b].name,'da'));
 function openEntry(e,u){e=e||{};u=u||uid;const isNew=!e.id;const projs=projOptions(e.p);
- const cur=Object.assign({d:todayS(),p:S.proj&&S.projects[S.proj]?S.proj:projs[0]||'',m:0,n:'',bl:true},e);const locked=!canEditE(cur.d);
+ const cur=Object.assign({d:todayS(),p:S.proj&&S.projects[S.proj]?S.proj:projs[0]||'',m:0,n:'',bl:true},e);if(isNew&&e.pz===undefined)cur.pz=!!(S.projects[cur.p]||{}).pause;const locked=!canEditE(cur.d);
  S.edT=u;
  $('#modal').innerHTML=`<div class="ov" data-act="mclose"><div class="md" role="dialog" aria-modal="true">
  <h2>${isNew?'Ny tidsregistrering':'Redigér registrering'}</h2>${u!==uid?'<div class="mu" style="margin-top:4px">For '+esc(nm(u))+'</div>':''}${locked?'<div class="inf" style="margin-top:10px">🔒 '+esc(mname(cur.d.slice(0,7)))+' er låst for redigering. Kontakt administrator, hvis noget skal rettes.</div>':''}
  <label for="ed">Dato</label><input id="ed" type="date" class="fl" value="${esc(cur.d)}" ${locked?'disabled':''}>
  <label for="ep">Projekt</label><select id="ep" class="fl" ${locked?'disabled':''}>${projs.map(k=>`<option value="${k}" ${k===cur.p?'selected':''}>${esc(S.projects[k].client?S.projects[k].client+' – ':'')+esc(S.projects[k].name)}</option>`).join('')}</select>
  <div class="g2"><div><label for="e0">Fra</label><input id="e0" type="time" class="fl" value="${esc(cur.t0||'')}" ${locked?'disabled':''}></div><div><label for="e1">Til</label><input id="e1" type="time" class="fl" value="${esc(cur.t1||'')}" ${locked?'disabled':''}></div></div>
- <label for="em">Varighed (fx 7,5 eller 7:30)</label><input id="em" class="fl" inputmode="decimal" value="${cur.m?esc(hm(cur.m)):''}" ${locked?'disabled':''}>
+ <label for="em">Varighed (fx 7,5 eller 7:30)</label><input id="em" class="fl" inputmode="decimal" value="${cur.m?esc(hm(cur.m+(cur.pz?PAUSE_MIN:0))):''}" ${locked?'disabled':''}>
  <label for="en">Beskrivelse</label><textarea id="en" class="fl" rows="2" ${locked?'disabled':''}>${esc(cur.n||'')}</textarea>
+ <label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink);text-transform:none;letter-spacing:0;margin-bottom:6px"><input id="epz" type="checkbox" ${cur.pz?'checked':''} ${locked?'disabled':''}> Pause (trækker 30 min fra tiden)</label>
  <label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink);text-transform:none;letter-spacing:0"><input id="eb" type="checkbox" ${cur.bl!==false?'checked':''} ${locked?'disabled':''}> Fakturerbar</label>
  <div id="merr"></div><div class="row" style="margin-top:16px"><button class="b a" data-act="msave" ${locked?'disabled':''}>Gem</button><button class="b" data-act="mclose">Annullér</button><span class="sp1"></span>${!isNew&&!locked?'<button class="b d" data-act="mdel">Slet</button>':''}</div></div></div>`;
  S.editing=cur;
- const calc=()=>{const a=t2m($('#e0').value),b=t2m($('#e1').value);if(a!=null&&b!=null&&b>a)$('#em').value=hm(b-a)};$('#e0').oninput=calc;$('#e1').oninput=calc}
+ const calc=()=>{const a=t2m($('#e0').value),b=t2m($('#e1').value);if(a!=null&&b!=null&&b>a)$('#em').value=hm(b-a)};$('#e0').oninput=calc;$('#e1').oninput=calc;if(isNew&&e.pz===undefined)$('#ep').onchange=()=>{$('#epz').checked=!!(S.projects[$('#ep').value]||{}).pause}}
 function closeModal(){$('#modal').innerHTML='';S.editing=null}
-async function saveModal(){const c=S.editing,u=S.edT;const m=parseDur($('#em').value);const d=$('#ed').value,p=$('#ep').value;
+async function saveModal(){const c=S.editing,u=S.edT;const pz=$('#epz').checked;const gross=parseDur($('#em').value);const m=gross?pzNet(gross,pz):0;const d=$('#ed').value,p=$('#ep').value;
  if(!d||!p||!m){$('#merr').innerHTML='<div class="err">Udfyld dato, projekt og varighed.</div>';return}
- if(m>24*60){$('#merr').innerHTML='<div class="err">Varighed kan ikke være over 24 timer.</div>';return}
+ if(gross>24*60){$('#merr').innerHTML='<div class="err">Varighed kan ikke være over 24 timer.</div>';return}
  if(!canEditE(d)){$('#merr').innerHTML='<div class="err">Datoen ligger i en låst måned.</div>';return}
- const e={id:c.id||uidn(),d,p,m,n:$('#en').value.trim(),bl:$('#eb').checked,t0:$('#e0').value||'',t1:$('#e1').value||''};
+ const e={id:c.id||uidn(),d,p,m,n:$('#en').value.trim(),bl:$('#eb').checked,pz:pz,t0:$('#e0').value||'',t1:$('#e1').value||''};
  S.proj=p;closeModal();await guard(async()=>{await saveEntry(u,e,c.id?c.d.slice(0,7):null)})}
 
 /* ---------- fælles visning ---------- */
-function entryRow(e,u){const p=proj(e.p),lk=!canEditE(e.d);return `<div class="ent"><span class="dot" style="background:${esc(p.color||'#9aa5ab')}"></span><div class="sp1"><b>${esc(p.name)}</b> <span class="mu">${esc(p.client||'')}</span><div class="mu">${esc(e.n||'')}${e.t0&&e.t1?' · '+esc(e.t0)+'–'+esc(e.t1):''}${e.bl===false?' · ikke fakturerbar':''}</div></div>${lk?'<span class="chip">🔒 Låst</span>':''}<span class="t">${hm(e.m)}</span><button class="b s" data-act="edit" data-id="${e.id}" data-d="${e.d}" data-u="${u||uid}">${lk?'Se':'Redigér'}</button></div>`}
+function entryRow(e,u){const p=proj(e.p),lk=!canEditE(e.d);return `<div class="ent"><span class="dot" style="background:${esc(p.color||'#9aa5ab')}"></span><div class="sp1"><b>${esc(p.name)}</b> <span class="mu">${esc(p.client||'')}</span><div class="mu">${esc(e.n||'')}${e.t0&&e.t1?' · '+esc(e.t0)+'–'+esc(e.t1):''}${e.pz?' · pause −30 min':''}${e.bl===false?' · ikke fakturerbar':''}</div></div>${lk?'<span class="chip">🔒 Låst</span>':''}<span class="t">${hm(e.m)}</span><button class="b s" data-act="edit" data-id="${e.id}" data-d="${e.d}" data-u="${u||uid}">${lk?'Se':'Redigér'}</button></div>`}
 function hm2(ms){const s=Math.max(0,Math.floor(ms/1000));return Math.floor(s/3600)+':'+pad(Math.floor(s%3600/60))+':'+pad(s%60)}
 function lockInfo(ym){if(S.isAdmin)return '';return isLocked(ym+'-01')?`<div class="inf">🔒 ${esc(mname(ym))} er låst for redigering.</div>`:`<div class="inf">${esc(mname(ym))} kan rettes indtil ${esc(lockText(ym))}. Herefter låses måneden.</div>`}
 function weekEntries(w){const d6=addD(w,6);[w.slice(0,7),d6.slice(0,7)].forEach(watchMonth);return allMy().filter(e=>e.d>=w&&e.d<=d6)}
@@ -112,7 +115,7 @@ function vTid(){const t=S.timer,td=todayS(),wk=mon(td);const projs=projOptions(t
  const hr=new Date().getHours(),gr=hr<10?'God morgen':hr<17?'Goddag':'God aften';const fn=(S.names[uid]||'').split(' ')[0];
  const days=[...Array(7)].map((_,i)=>addD(wk,i)),dm=days.map(d=>we.filter(e=>e.d===d).reduce((s,e)=>s+e.m,0)),mx=Math.max(...dm,TARGET/5);
  let h=`<h1 style="font-size:26px;font-weight:750;margin:6px 2px 16px;letter-spacing:-.02em">${gr}${fn&&fn!=='Mig'?', '+esc(fn):''} 👷</h1>
- <div class="card hero">${CRANE}<div class="row" style="position:relative;z-index:1"><div class="sp1"><div class="mu">${t?'<span class="live"></span>Timer kører':'Klar til at starte'}</div><div class="tmr" id="tmr" style="margin-top:6px">${t?hm2(Date.now()-t.start):'0:00:00'}</div></div>${t?'<button class="b d" data-act="stop" style="padding:15px 28px;font-size:16px;border-radius:16px">■ Stop</button>':'<button class="b a" data-act="start" style="padding:15px 28px;font-size:16px;border-radius:16px" '+(S.canWrite&&projs.length?'':'disabled')+'>▶ Start</button>'}</div>
+ <div class="card hero">${CRANE}<div class="row" style="position:relative;z-index:1"><div class="sp1"><div class="mu">${t?'<span class="live"></span>Timer kører':'Klar til at starte'}</div><div class="tmr" id="tmr" style="margin-top:6px">${t?hm2(Date.now()-t.start):'0:00:00'}</div></div>${t?'<label class="pz"><input id="tpz" type="checkbox" '+((S.tpz!==undefined?S.tpz:!!proj(t.p).pause)?'checked':'')+'> Pause</label><button class="b d" data-act="stop" style="padding:15px 28px;font-size:16px;border-radius:16px">■ Stop</button>':'<button class="b a" data-act="start" style="padding:15px 28px;font-size:16px;border-radius:16px" '+(S.canWrite&&projs.length?'':'disabled')+'>▶ Start</button>'}</div>
  <div class="g2" style="position:relative;z-index:1"><div><label for="tp">Projekt</label><select id="tp" class="fl" ${t?'disabled':''}><option value="">Vælg projekt …</option>${opts}</select></div><div><label for="tn">Hvad arbejder du på?</label><input id="tn" class="fl" value="${esc(t?t.n:S.note)}" ${t?'disabled':''} placeholder="Beskrivelse (valgfri)"></div></div></div>`;
  if(!projs.length)h+=noProj();
  h+=`<div class="kpis"><div class="kpi"><span>I dag</span><b>${hm(tot)}</b></div><div class="kpi"><span>Denne uge</span><b>${hm(wt)}<small style="font-size:13px;color:var(--mu);font-weight:600"> / ${hm(TARGET)}</small></b></div><div class="kpi"><span>Fakturerbart</span><b>${wt?Math.round(wb/wt*100):0}%</b></div></div>
@@ -142,7 +145,7 @@ function vMaaned(){const ym=S.mm;watchMonth(ym);const es=allMy().filter(e=>e.d.s
 /* ----- admin: medarbejdere ----- */
 /* ----- admin: data ----- */
 async function loadBase(){
- const ps=await fetchAll(()=>sb.from('projects').select('*').order('name'));S.projects={};ps.forEach(p=>S.projects[p.id]={name:p.name,client:p.client||'',cvr:p.cvr||'',color:p.color||'#d9480f',active:p.active});
+ const ps=await fetchAll(()=>sb.from('projects').select('*').order('name'));S.projects={};ps.forEach(p=>S.projects[p.id]={name:p.name,client:p.client||'',cvr:p.cvr||'',color:p.color||'#d9480f',active:p.active,pause:!!p.pause_default});
  if(S.isAdmin){const rs=await fetchAll(()=>sb.from('project_rates').select('*'));rs.forEach(r=>{if(S.projects[r.project_id])S.projects[r.project_id].rate=Number(r.rate)});
   const pr=await fetchAll(()=>sb.from('profiles').select('*').order('name'));S.members=pr.map(p=>p.id);pr.forEach(p=>{S.names[p.id]=p.name||'';S.emails[p.id]=p.email;S.roles[p.id]=p.role});
   const as=await fetchAll(()=>sb.from('assignments').select('*'));S.assignAll={};as.forEach(a=>(S.assignAll[a.user_id]=S.assignAll[a.user_id]||{})[a.project_id]=true)}}
@@ -169,11 +172,12 @@ function openProj(id){const p=id?S.projects[id]:{name:'',client:'',cvr:'',rate:'
  <label for="pn">Projektnavn</label><input id="pn" class="fl" value="${esc(p.name)}"><div class="g2"><div><label for="pc">Kunde</label><input id="pc" class="fl" value="${esc(p.client||'')}"></div><div><label for="pv">Kundens CVR</label><input id="pv" class="fl" inputmode="numeric" value="${esc(p.cvr||'')}"></div></div>
  <label for="pr">Timepris (kr., kun synlig for administratorer)</label><input id="pr" class="fl" inputmode="numeric" value="${esc(p.rate||'')}">
  <label>Tildelte medarbejdere</label><div id="pm">${S.members.length?S.members.map(u=>`<label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink);text-transform:none;letter-spacing:0;margin:6px 0"><input type="checkbox" data-u="${u}" ${id&&(S.assignAll[u]||{})[id]?'checked':''}> ${esc(nm(u))}</label>`).join(''):'<div class="mu">Ingen medarbejdere endnu. De vises her, når de har åbnet siden første gang.</div>'}</div>
+ <label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink);text-transform:none;letter-spacing:0;margin-top:14px"><input id="pp" type="checkbox" ${p.pause?'checked':''}> Pause som standard (trækker 30 min fra hver registrering)</label>
  <label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink);text-transform:none;letter-spacing:0;margin-top:14px"><input id="pa" type="checkbox" ${p.active!==false?'checked':''}> Aktivt (kan registreres på)</label>
  <div id="merr"></div><div class="row" style="margin-top:16px"><button class="b a" data-act="psave" data-id="${id||''}">Gem</button><button class="b" data-act="mclose">Annullér</button><span class="sp1"></span>${id?'<button class="b d" data-act="pdel" data-id="'+id+'">Slet</button>':''}</div></div></div>`}
 async function saveProj(id){const n=$('#pn').value.trim();if(!n){$('#merr').innerHTML='<div class="err">Angiv et projektnavn.</div>';return}
  const k=id||uidn();const col=(S.projects[id]||{}).color||PALETTE[Object.keys(S.projects).length%PALETTE.length];
- const o={id:k,name:n,client:$('#pc').value.trim(),cvr:$('#pv').value.replace(/\D/g,''),active:$('#pa').checked,color:col};const rate=Number($('#pr').value.replace(',','.'))||0;
+ const o={id:k,name:n,client:$('#pc').value.trim(),cvr:$('#pv').value.replace(/\D/g,''),active:$('#pa').checked,pause_default:$('#pp').checked,color:col};const rate=Number($('#pr').value.replace(',','.'))||0;
  const chosen={};document.querySelectorAll('#pm input[data-u]').forEach(c=>chosen[c.dataset.u]=c.checked);
  closeModal();await guard(async()=>{let r=await sb.from('projects').upsert(o);if(r.error)throw r.error;r=await sb.from('project_rates').upsert({project_id:k,rate});if(r.error)throw r.error;
   const add=[],del=[];for(const u of S.members){const had=!!(S.assignAll[u]||{})[k],want=!!chosen[u];if(want&&!had)add.push({user_id:u,project_id:k});if(!want&&had)del.push(u)}
@@ -285,6 +289,7 @@ document.addEventListener('change',ev=>{if(S.view==='rep'&&/^r[yucr]$/.test(ev.t
 
 
 /* ---------- ekstra handlinger ---------- */
+document.addEventListener('change',ev=>{if(ev.target&&ev.target.id==='tpz')S.tpz=ev.target.checked});
 document.addEventListener('click',async ev=>{const t=ev.target.closest('[data-act]');if(!t)return;const a=t.dataset.act;
  if(a==='logout'){await sb.auth.signOut();location.reload()}
  else if(a==='role'){const u=t.dataset.u,nr=S.roles[u]==='admin'?'user':'admin';await guard(async()=>{const {error}=await sb.from('profiles').update({role:nr}).eq('id',u);if(error)throw error;S.roles[u]=nr})}
