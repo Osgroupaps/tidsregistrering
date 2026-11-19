@@ -68,3 +68,4 @@ header .b.s{margin-left:4px}
 button,input,select,textarea{border-radius:6px}
 .pill{border-radius:4px}
 .tmr{font-weight:600;letter-spacing:-.02em}
+.pz{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:#fff;text-transform:none;letter-spacing:0;margin:0 12px 0 0;cursor:pointer;white-space:nowrap}.pz input{width:18px;height:18px;accent-color:#fbbf24}
