@@ -76,6 +76,33 @@ document.addEventListener('click',async ev=>{const t=ev.target.closest('[data-ac
  else if(a==='dsend'){S.dn.busy=d.k;S.dn.msg='';render();await logoReady;
   try{const {data,error}=await sb.functions.invoke('dinero',{body:{action:'draft',ym:S.rep.ym,userId:d.u,customer:{name:d.c,cvr:d.cvr},title:'Timer – '+nm(d.u)+' – '+mname(S.rep.ym),comment:'Se bilag: timeregistrering for '+nm(d.u)+', '+mname(S.rep.ym)+'.',lines:d.lines,total:d.total}});
    let msg=data&&data.error;if(error&&!msg){try{msg=(await error.context.json()).error}catch(e){msg='Kunne ikke kontakte funktionen "dinero".'}}
-   if(msg)S.dn.msg='Overførslen mislykkedes: '+msg;else{S.dn.sent[d.k]=new Date().toISOString();S.dn.msg='Kladden til '+d.c+' er oprettet i Dinero. Bilaget er hentet som PDF – vedhæft det på kladden i Dinero.';await saveFile(dFile(d),bilagLogoPdf(d))}}
+   if(msg)S.dn.msg='Overførslen mislykkedes: '+msg;else{S.dn.sent[d.k]=new Date().toISOString();S.dn.ov.loaded=false;S.dn.msg='Kladden til '+d.c+' er oprettet i Dinero. Bilaget er hentet som PDF – vedhæft det på kladden i Dinero.';await saveFile(dFile(d),bilagLogoPdf(d))}}
   catch(e){S.dn.msg='Overførslen mislykkedes: '+((e&&e.message)||e)}
   S.dn.busy='';render()}});
+
+/* ----- overblik: overført til Dinero pr. medarbejder og måned ----- */
+S.dn.ov=S.dn.ov||{loaded:false,busy:false,months:[],hrs:{},exp:{},err:''};
+function ovMonths(){const t=todayS();const out=[];let y=+t.slice(0,4),m=+t.slice(5,7);for(let i=0;i<6;i++){out.push(y+'-'+pad(m));m--;if(m<1){m=12;y--}}return out}
+async function ovLoad(){const o=S.dn.ov;if(o.busy)return;o.busy=true;o.err='';
+ try{if(!S.members.length)await loadBase();o.months=ovMonths();o.hrs={};
+  for(const ym of o.months){const [a,b]=range(ym);const rows=await fetchAll(()=>sb.from('time_entries').select('user_id,project_id,minutes,billable').gte('work_date',a).lte('work_date',b));
+   rows.forEach(r=>{if(r.billable===false)return;const c=proj(r.project_id).client||'';const k=r.user_id+'|'+ym;const x=o.hrs[k]=o.hrs[k]||{m:0,c:{}};x.m+=r.minutes;x.c[c]=1})}
+  const ex=await fetchAll(()=>sb.from('dinero_exports').select('ym,user_id,customer,created_at'));o.exp={};ex.forEach(e=>{o.exp[e.user_id+'|'+e.ym+'|'+e.customer]=e.created_at});
+  o.loaded=true}catch(e){o.err=errText(e)}
+ o.busy=false;render()}
+function ovStatus(u,ym){const o=S.dn.ov,h=o.hrs[u+'|'+ym];if(!h)return {k:'none'};const cs=Object.keys(h.c),done=cs.filter(c=>o.exp[u+'|'+ym+'|'+c]);
+ if(done.length===cs.length)return {k:'ok',d:o.exp[u+'|'+ym+'|'+cs[0]]};if(done.length)return {k:'part',n:done.length,t:cs.length};return {k:ym===todayS().slice(0,7)?'open':'miss'}}
+function ovCard(){const o=S.dn.ov;if(!o.loaded&&!o.busy&&!o.err)setTimeout(ovLoad,0);
+ let c='<div class="card"><div class="row"><h2 class="sp1">Overblik: overført til Dinero</h2><button class="b s" data-act="ovload">Opdatér</button></div>';
+ if(o.err)c+='<div class="inf" style="margin-top:10px">Kunne ikke hente overblikket: '+esc(o.err)+'</div>';
+ if(!o.loaded)return c+(o.err?'':'<div class="empty">Henter …</div>')+'</div>';
+ const emps=S.members.filter(u=>o.months.some(ym=>o.hrs[u+'|'+ym])).sort((a,b)=>nm(a).localeCompare(nm(b),'da'));
+ if(!emps.length)return c+'<div class="empty">Ingen fakturerbare timer de seneste 6 måneder.</div></div>';
+ let miss=0;const cell=(u,ym)=>{const s=ovStatus(u,ym);if(s.k==='none')return '<td class="n mu">–</td>';
+  if(s.k==='ok')return '<td class="n" style="color:#1a7f4b;font-weight:650" title="Overført '+esc(String(s.d).slice(0,10))+'">✓ Overført</td>';
+  if(s.k==='part'){miss++;return '<td class="n" style="color:#b45309;font-weight:650">Delvist '+s.n+'/'+s.t+'</td>'}
+  if(s.k==='open')return '<td class="n mu">I gang</td>';miss++;return '<td class="n" style="color:#c2410c;font-weight:650">Mangler</td>'};
+ const rows=emps.map(u=>'<tr><td>'+esc(nm(u))+'</td>'+o.months.map(ym=>cell(u,ym)).join('')+'</tr>').join('');
+ c+='<p class="mu" style="margin:6px 0 10px">'+(miss?'<b style="color:#c2410c">'+miss+' mangler</b> at blive overført til Dinero.':'Alt er overført til Dinero.')+' Viser kun fakturerbare timer. Måneden i gang vises som “I gang”.</p><div class="sc"><table><tr><th>Medarbejder</th>'+o.months.map(ym=>'<th class="n">'+esc(MON[+ym.slice(5,7)-1].slice(0,3)+' '+ym.slice(2,4))+'</th>').join('')+'</tr>'+rows+'</table></div></div>';return c}
+const _vRep2=vRep;vRep=function(){return _vRep2()+ovCard()};
+document.addEventListener('click',ev=>{const t=ev.target.closest('[data-act="ovload"]');if(!t)return;S.dn.ov.loaded=false;S.dn.ov.err='';ovLoad()});
