@@ -89,3 +89,9 @@ main{padding:14px 18px 48px;max-width:1100px;margin:0 auto}
  nav{padding:30px 16px;box-shadow:12px 0 40px -30px rgba(22,33,43,.25)}
  header{padding:18px 40px 6px;border-bottom:0}main{padding:10px 40px 56px}
  .wl{padding:34px 38px}.wl h1{font-size:36px}.card{padding:28px}}
+
+/* Logoet tilpasser sig altid den plads det har (skalerer ned i bredden, beholder forholdet) */
+header img,.brand img,.authlogo img{width:auto;max-width:100%;object-fit:contain}
+header img{height:auto;max-height:46px;max-width:min(240px,45vw);flex:0 1 auto;min-width:0}
+.authlogo img{height:auto;max-height:72px}
+@media(min-width:900px){.brand img{display:block;width:100%;height:auto;max-height:64px;object-position:left center}}
