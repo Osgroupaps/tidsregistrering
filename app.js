@@ -169,9 +169,29 @@ function vEmp(){const r=S.emp;let h=`<div class="card"><h2>Medarbejdernes timer<
 function vProj(){const ps=Object.keys(S.projects).sort((a,b)=>S.projects[a].name.localeCompare(S.projects[b].name,'da'));
  let h=`<div class="row" style="margin:6px 2px 16px"><h1 class="sp1" style="font-size:26px;font-weight:750;letter-spacing:-.02em">Projekter</h1><button class="b a" data-act="pnew">+ Nyt projekt</button></div>`;
  h+=ps.length?`<div class="pg">${ps.map(k=>{const p=S.projects[k];const who=S.members.filter(u=>(S.assignAll[u]||{})[k]);return `<div class="pc"><div class="row"><span class="dot" style="background:${esc(p.color||'#999')}"></span><b class="sp1">${esc(p.name)}</b>${p.active===false?'<span class="chip">Inaktiv</span>':''}</div><div class="mu" style="margin:4px 0 10px 20px">${esc(p.client||'Ingen kunde')}${p.cvr?' · CVR '+esc(p.cvr):''}<br>${p.rate?kr(p.rate)+' pr. time':'Ingen timepris'}</div><div class="mu" style="margin-bottom:12px"><b>Medarbejdere:</b> ${who.length?who.map(u=>esc(nm(u))).join(', '):'ingen tildelt'}</div><button class="b s" data-act="pedit" data-id="${k}">Redigér</button></div>`}).join('')}</div>`:'<div class="card empty">'+HAT+'<br>Ingen projekter endnu.</div>';return h}
-function openProj(id){const p=id?S.projects[id]:{name:'',client:'',cvr:'',rate:'',active:true};
+/* ----- kunder: dropdown + CVR-opslag ----- */
+function clientCvr(c){const p=Object.values(S.projects).find(p=>p.client===c&&p.cvr);return p?p.cvr:''}
+function custSelect(cur){const cl=clients();const isNew=!cl.length||(cur&&!cl.includes(cur));
+ return `<select id="pcs" class="fl">${cl.length?`<option value="">Vælg kunde …</option>`:''}${cl.map(c=>`<option value="${esc(c)}" ${c===cur?'selected':''}>${esc(c)}</option>`).join('')}<option value="__new" ${isNew?'selected':''}>+ Ny kunde …</option></select>`}
+let cvrSeq=0;
+async function cvrLookup(q){const n=++cvrSeq;const h=$('#pvh');if(h)h.textContent='Søger i CVR-registret …';
+ try{const r=await fetch('https://cvrapi.dk/api?'+q+'&country=dk');const d=await r.json();if(n!==cvrSeq||!$('#pv'))return null;
+  if(!d||d.error||!d.vat){if(h)h.textContent=d&&d.error==='QUOTA_EXCEEDED'?'CVR-opslag er midlertidigt opbrugt. Skriv CVR selv.':'Ikke fundet i CVR-registret. Skriv CVR selv.';return null}
+  if(h)h.textContent='CVR-registret: '+d.name+(d.city?', '+d.city:'');return d}
+ catch(e){if(h&&n===cvrSeq)h.textContent='CVR-opslag fejlede. Skriv CVR selv.';return null}}
+document.addEventListener('change',async ev=>{const t=ev.target;if(!t||!t.id)return;
+ if(t.id==='pcs'){const pc=$('#pc'),pv=$('#pv'),h=$('#pvh');h.textContent='';
+  if(t.value==='__new'){pc.style.display='';pc.value='';pv.value='';pc.focus();return}
+  pc.style.display='none';pc.value=t.value;pv.value=clientCvr(t.value);
+  if(t.value&&!pv.value){const d=await cvrLookup('search='+encodeURIComponent(t.value));if(d&&!pv.value)pv.value=String(d.vat)}}
+ else if(t.id==='pc'){const v=t.value.trim();if(!v)return;
+  const hit=clients().find(c=>c.toLowerCase()===v.toLowerCase());if(hit){const sel=$('#pcs');sel.value=hit;sel.dispatchEvent(new Event('change',{bubbles:true}));return}
+  const d=await cvrLookup('search='+encodeURIComponent(v));if(d){$('#pv').value=String(d.vat)}}
+ else if(t.id==='pv'){const v=t.value.replace(/\D/g,'');if(v.length!==8)return;
+  const d=await cvrLookup('vat='+v);if(d&&$('#pcs').value==='__new'&&!$('#pc').value.trim())$('#pc').value=d.name}});
+function openProj(id){const p=id?S.projects[id]:{name:'',client:'',cvr:'',rate:'',active:true};const cl=clients();
  $('#modal').innerHTML=`<div class="ov" data-act="mclose"><div class="md" role="dialog" aria-modal="true"><h2>${id?'Redigér projekt':'Nyt projekt'}</h2>
- <label for="pn">Projektnavn</label><input id="pn" class="fl" value="${esc(p.name)}"><div class="g2"><div><label for="pc">Kunde</label><input id="pc" class="fl" value="${esc(p.client||'')}"></div><div><label for="pv">Kundens CVR</label><input id="pv" class="fl" inputmode="numeric" value="${esc(p.cvr||'')}"></div></div>
+ <label for="pn">Projektnavn</label><input id="pn" class="fl" value="${esc(p.name)}"><div class="g2"><div><label for="pcs">Kunde</label>${custSelect(p.client||'')}<input id="pc" class="fl" placeholder="Kundens navn" style="${cl.length&&(!p.client||cl.includes(p.client))?'display:none;':''}margin-top:8px" value="${esc(p.client||'')}"></div><div><label for="pv">Kundens CVR</label><input id="pv" class="fl" inputmode="numeric" value="${esc(p.cvr||'')}"><div id="pvh" class="mu" style="font-size:12px;margin-top:4px"></div></div></div>
  <label for="pr">Timepris (kr., kun synlig for administratorer)</label><input id="pr" class="fl" inputmode="numeric" value="${esc(p.rate||'')}">
  <label>Pause</label><label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink);text-transform:none;letter-spacing:0;margin:2px 0 18px"><input id="pp" type="checkbox" ${p.pause?'checked':''}> Pause som standard (trækker 30 min fra hver registrering)</label>
  <label>Tildelte medarbejdere</label><div id="pm">${S.members.length?S.members.map(u=>`<label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink);text-transform:none;letter-spacing:0;margin:6px 0"><input type="checkbox" data-u="${u}" ${id&&(S.assignAll[u]||{})[id]?'checked':''}> ${esc(nm(u))}</label>`).join(''):'<div class="mu">Ingen medarbejdere endnu. De vises her, når de har åbnet siden første gang.</div>'}</div>
