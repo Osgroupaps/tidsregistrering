@@ -349,7 +349,10 @@ async function boot(session){uid=session.user.id;const ym=todayS().slice(0,7);
  try{await work;S.loaded=true;if(S.isAdmin)loadAdmin([ym])}catch(e){S.fetched[ym]=0;S.loaded=true;S.err='Kunne ikke hente data: '+errText(e)}
  render();if(!ticker)ticker=setInterval(tick,1000)}
 (async function init(){
- if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+ if('serviceWorker' in navigator){const sw=navigator.serviceWorker,had=!!sw.controller;let rl=false;
+  /* Når en ny version er hentet, genindlæses appen én gang, så den nye version bruges med det samme */
+  sw.addEventListener('controllerchange',()=>{if(had&&!rl&&!$('#modal').innerHTML.trim()){rl=true;location.reload()}});
+  sw.register('sw.js',{updateViaCache:'none'}).then(reg=>{reg.update().catch(()=>{});document.addEventListener('visibilitychange',()=>{if(!document.hidden)reg.update().catch(()=>{})})}).catch(()=>{})}
  if(!CFG.SUPABASE_URL||!CFG.SUPABASE_ANON_KEY||!window.supabase){document.body.classList.add('noauth');$('#auth').innerHTML='<div class="authcard"><h1>Ikke sat op endnu</h1><p class="mu">Siden mangler forbindelse til databasen. Udfyld <b>config.js</b> med Supabase-adresse og nøgle.</p></div>';return}
  sb=window.supabase.createClient(CFG.SUPABASE_URL,CFG.SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
  sb.auth.onAuthStateChange(ev=>{if(ev==='PASSWORD_RECOVERY')showAuth('setpw');if(ev==='SIGNED_OUT'&&uid)location.reload()});
