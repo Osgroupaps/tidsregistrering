@@ -144,11 +144,13 @@ function vMaaned(){const ym=S.mm;watchMonth(ym);const es=allMy().filter(e=>e.d.s
 
 /* ----- admin: medarbejdere ----- */
 /* ----- admin: data ----- */
+async function loadProjects(){const ps=await fetchAll(()=>sb.from('projects').select('*').order('name'));const old=S.projects||{};S.projects={};ps.forEach(p=>S.projects[p.id]={name:p.name,client:p.client||'',cvr:p.cvr||'',color:p.color||'#d9480f',active:p.active,pause:!!p.pause_default,rate:(old[p.id]||{}).rate})}
 async function loadBase(){
- const ps=await fetchAll(()=>sb.from('projects').select('*').order('name'));S.projects={};ps.forEach(p=>S.projects[p.id]={name:p.name,client:p.client||'',cvr:p.cvr||'',color:p.color||'#d9480f',active:p.active,pause:!!p.pause_default});
- if(S.isAdmin){const rs=await fetchAll(()=>sb.from('project_rates').select('*'));rs.forEach(r=>{if(S.projects[r.project_id])S.projects[r.project_id].rate=Number(r.rate)});
-  const pr=await fetchAll(()=>sb.from('profiles').select('*').order('name'));S.members=pr.map(p=>p.id);pr.forEach(p=>{S.names[p.id]=p.name||'';S.emails[p.id]=p.email;S.roles[p.id]=p.role});
-  const as=await fetchAll(()=>sb.from('assignments').select('*'));S.assignAll={};as.forEach(a=>(S.assignAll[a.user_id]=S.assignAll[a.user_id]||{})[a.project_id]=true)}}
+ if(!S.isAdmin)return loadProjects();
+ const [,rs,pr,as]=await Promise.all([loadProjects(),fetchAll(()=>sb.from('project_rates').select('*')),fetchAll(()=>sb.from('profiles').select('*').order('name')),fetchAll(()=>sb.from('assignments').select('*'))]);
+ {rs.forEach(r=>{if(S.projects[r.project_id])S.projects[r.project_id].rate=Number(r.rate)});
+  S.members=pr.map(p=>p.id);pr.forEach(p=>{S.names[p.id]=p.name||'';S.emails[p.id]=p.email;S.roles[p.id]=p.role});
+  S.assignAll={};as.forEach(a=>(S.assignAll[a.user_id]=S.assignAll[a.user_id]||{})[a.project_id]=true)}}
 async function loadAdmin(months){S.admLoading=true;render();
  try{await loadBase();
   for(const ym of months){const [a,b]=range(ym);const rows=await fetchAll(()=>sb.from('time_entries').select('*').gte('work_date',a).lte('work_date',b).order('work_date'));const g={};S.members.forEach(u=>g[u]={});rows.forEach(r=>{(g[r.user_id]=g[r.user_id]||{})[r.id]=fromRow(r)});S.adm[ym]=g}}
@@ -318,12 +320,13 @@ document.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&document.body.clas
 
 /* ---------- start ---------- */
 let ticker=null;
-async function boot(session){uid=session.user.id;
+async function boot(session){uid=session.user.id;const ym=todayS().slice(0,7);
+ document.body.classList.remove('noauth');$('#app').innerHTML='<div class="empty">Indlæser …</div>';
+ S.fetched[ym]=1;const work=Promise.all([loadProjects(),loadTimer(),loadMonth(ym)]);work.catch(()=>{});
  const {data,error}=await sb.from('profiles').select('*').eq('id',uid).maybeSingle();
  if(error||!data){showAuth('login','Din bruger er ikke sat op endnu. Kontakt administrator.');await sb.auth.signOut();return}
  me=data;S.isAdmin=me.role==='admin';S.names[uid]=me.name||'';S.emails[uid]=me.email;S.roles[uid]=me.role;
- document.body.classList.remove('noauth');$('#app').innerHTML='<div class="empty">Indlæser …</div>';
- try{await loadBase();await loadTimer();S.loaded=true;watchMonth(todayS().slice(0,7));if(S.isAdmin)loadAdmin([todayS().slice(0,7)])}catch(e){S.loaded=true;S.err='Kunne ikke hente data: '+errText(e)}
+ try{await work;S.loaded=true;if(S.isAdmin)loadAdmin([ym])}catch(e){S.fetched[ym]=0;S.loaded=true;S.err='Kunne ikke hente data: '+errText(e)}
  render();if(!ticker)ticker=setInterval(tick,1000)}
 (async function init(){
  if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
